@@ -1,0 +1,14 @@
+# binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# directories
+build/
+
+# go workspace file
+go.work

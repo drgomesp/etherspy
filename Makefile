@@ -1,0 +1,17 @@
+NAME := etherspy
+VERSION := $(shell git describe --tags --always)
+SRC_DIR :=
+
+GO_BUILD := $(shell go build -ldflags "-X main.Version=$(VERSION)")
+
+build: clean
+	@echo "build $(VERSION)"
+	@$(GO_BUILD) -o ./build/$(NAME) $(SRC_DIR)
+
+install:
+	@echo "installing to $(GOPATH)/bin"
+	@cd $(SRC_DIR) && go install
+
+clean:
+	@echo "cleaning artifacts"
+	@rm -rf build/ && mkdir build/
