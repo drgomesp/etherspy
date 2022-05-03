@@ -1,8 +1,8 @@
 NAME := etherspy
 VERSION := $(shell git describe --tags --always)
-SRC_DIR :=
+SRC_DIR := ./cmd/etherspy
 
-GO_BUILD := $(shell go build -ldflags "-X main.Version=$(VERSION)")
+GO_BUILD := go build -ldflags "-X main.Version=$(VERSION)"
 
 build: clean
 	@echo "build $(VERSION)"
