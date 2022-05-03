@@ -1,3 +1,3 @@
-# scaffold-go
+# etherspy
 
-Tiny bootstrap/toolkit for Go applications. 
+A network utility for Ethereum protocols  
