@@ -1,24 +1,15 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
-	"errors"
 	"flag"
-	"fmt"
 	"github.com/davecgh/go-spew/spew"
-	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/crypto/secp256k1"
+	"github.com/drgomesp/etherspy/pkg/ethereum/protocol/discv4"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/examples/util"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
-	"github.com/google/gopacket/tcpassembly"
-	"github.com/google/gopacket/tcpassembly/tcpreader"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"io"
-	"net/http"
 	"os"
 	"time"
 )
@@ -38,52 +29,13 @@ const (
 
 // Packet types
 const (
-	skip = iota
-	PacketPing
+	PacketPing = iota + 1
 	PacketPong
 )
 
 func init() {
 	zerolog.SetGlobalLevel(zerolog.TraceLevel)
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
-}
-
-// httpStreamFactory implements tcpassembly.StreamFactory
-type httpStreamFactory struct{}
-
-// httpStream will handle the actual decoding of http requests.
-type httpStream struct {
-	net, transport gopacket.Flow
-	r              tcpreader.ReaderStream
-}
-
-func (h *httpStreamFactory) New(net, transport gopacket.Flow) tcpassembly.Stream {
-	hstream := &httpStream{
-		net:       net,
-		transport: transport,
-		r:         tcpreader.NewReaderStream(),
-	}
-	go hstream.run() // Important... we must guarantee that data from the reader stream is read.
-
-	// ReaderStream implements tcpassembly.Stream, so we can return a pointer to it.
-	return &hstream.r
-}
-
-func (h *httpStream) run() {
-	buf := bufio.NewReader(&h.r)
-	for {
-		req, err := http.ReadRequest(buf)
-		if err == io.EOF {
-			// We must read until we see an EOF... very important!
-			return
-		} else if err != nil {
-			log.Fatal().Err(err).Send()
-		} else {
-			bodyBytes := tcpreader.DiscardBytesToEOF(req.Body)
-			_ = req.Body.Close()
-			log.Debug().Msgf("received request from stream", h.net, h.transport, ":", req, "with", bodyBytes, "bytes in request body")
-		}
-	}
 }
 
 func main() {
@@ -107,11 +59,6 @@ func main() {
 		log.Fatal().Err(err).Send()
 	}
 
-	// Set up assembly
-	streamFactory := &httpStreamFactory{}
-	streamPool := tcpassembly.NewStreamPool(streamFactory)
-	assembler := tcpassembly.NewAssembler(streamPool)
-
 	log.Info().Msg("reading in packets")
 
 	// Read in packets, pass to assembler.
@@ -126,17 +73,8 @@ func main() {
 				return
 			}
 
-			// Get packet information
-			ip := packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4)
-			lengthPacket := packet.Metadata().Length
-			buf := packet.Layers()[3].LayerContents()
-
-			if len(buf) < headSize+1 {
-				log.Debug().Msg("packet too small")
-				continue
-			}
-
-			if udp := packet.TransportLayer().(*layers.UDP); udp == nil {
+			udp := packet.TransportLayer().(*layers.UDP)
+			if udp == nil {
 				continue
 			}
 
@@ -144,62 +82,31 @@ func main() {
 				spew.Dump(packet)
 			}
 
-			hash, sig, sigdata := buf[:macSize], buf[macSize:headSize], buf[headSize:]
-			shouldHash := crypto.Keccak256(buf[macSize:])
-			if !bytes.Equal(hash, shouldHash) {
-				log.Error().Err(errors.New("bad hash")).Send()
-				continue
+			buf := packet.Layers()[3].LayerContents()
+
+			var (
+				hash   []byte
+				p      interface{}
+				nodeID discv4.NodeID
+			)
+
+			if buf != nil {
+				hash, p, nodeID, err = discv4.Decode(buf)
+				checkError(err)
+
+				_, _ = hash, nodeID
+				
+				spew.Dump(p)
 			}
-
-			nid, err := recoverNodeID(crypto.Keccak256(buf[headSize:]), sig)
-			if err != nil {
-				log.Fatal().Err(err).Send()
-			}
-
-			// Print initial info
-			log.Debug().Str("time", packet.Metadata().Timestamp.Format("01/02/2006 3:04:05.000000PM")).
-				Str("src", ip.SrcIP.String()).
-				Str("dst", ip.DstIP.String()).
-				Int("len", lengthPacket).
-				Str("node", nid.String()).
-				Msgf("packet received")
-
-			switch ptype := sigdata[0]; ptype {
-			case PacketPing:
-				log.Debug().Msgf("PING")
-			}
-
-			//assembler.AssembleWithTimestamp(packet.NetworkLayer().NetworkFlow(), tcp, packet.Metadata().Timestamp)
 
 		case <-ticker:
-			// Every minute, flush connections that haven't seen activity in the past 2 minutes.
-			assembler.FlushOlderThan(time.Now().Add(time.Minute * -2))
+			log.Trace().Msg("the clock is ticking")
 		}
 	}
 }
 
-// NodeID is a unique identifier for each node.
-// The node identifier is a marshaled elliptic curve public key.
-// 512 bits.
-type NodeID [64]byte
-
-// String() returns NodeID as a long hexadecimal number.
-func (n NodeID) String() string {
-	return fmt.Sprintf("%x", n[:])
-}
-
-// recoverNodeID computes the public key used to sign the
-// given hash from the signature.
-func recoverNodeID(hash, sig []byte) (id NodeID, err error) {
-	pubkey, err := secp256k1.RecoverPubkey(hash, sig)
+func checkError(err error) {
 	if err != nil {
-		return id, err
+		log.Fatal().Err(err).Send()
 	}
-	if len(pubkey)-1 != len(id) {
-		return id, fmt.Errorf("recovered pubkey has %d bits, want %d bits", len(pubkey)*8, (len(id)+1)*8)
-	}
-	for i := range id {
-		id[i] = pubkey[i+1]
-	}
-	return id, nil
 }
