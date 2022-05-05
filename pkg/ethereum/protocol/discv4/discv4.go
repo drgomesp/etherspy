@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/p2p/enr"
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
@@ -30,6 +31,10 @@ func (p PacketKind) String() string {
 		return "FIND_NODE"
 	case PacketNeighbors:
 		return "NEIGHBORS"
+	case PacketENRRequest:
+		return "PACKET_ENR_REQUEST"
+	case PacketENRResponse:
+		return "PACKET_ENR_RESPONSE"
 	default:
 		return "UNKNOWN"
 	}
@@ -70,6 +75,17 @@ type Neighbors struct {
 	Rest       []rlp.RawValue `rlp:"tail"`
 }
 
+type ENRRequest struct {
+	Expiration uint64
+	Rest       []rlp.RawValue `rlp:"tail"`
+}
+
+type ENRResponse struct {
+	ReplyTok []byte
+	Record   enr.Record
+	Rest     []rlp.RawValue `rlp:"tail"`
+}
+
 func Decode(buf []byte) (hash []byte, p interface{}, ptype PacketKind, id NodeID, err error) {
 	if len(buf) < headSize+1 {
 		return hash, p, 0x0, id, errors.New("packet too small")
@@ -94,6 +110,10 @@ func Decode(buf []byte) (hash []byte, p interface{}, ptype PacketKind, id NodeID
 		p = new(FindNode)
 	case PacketNeighbors:
 		p = new(Neighbors)
+	case PacketENRRequest:
+		p = new(ENRRequest)
+	case PacketENRResponse:
+		p = new(ENRResponse)
 	default:
 		return hash, p, 0x0, id, fmt.Errorf("unknown type: %d", ptype)
 	}

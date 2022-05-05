@@ -1,9 +1,13 @@
 package main
 
 import (
+	"crypto/ecdsa"
 	"flag"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/drgomesp/etherspy/pkg/ethereum/protocol/discv4"
+	"github.com/drgomesp/etherspy/pkg/ethereum/protocol/discv5"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/examples/util"
 	"github.com/google/gopacket/layers"
@@ -87,13 +91,35 @@ func main() {
 				nodeID discv4.NodeID
 			)
 
+			useV5 := true
+
 			if buf != nil {
-				hash, p, ptype, nodeID, err = discv4.Decode(buf)
-				checkError(err)
+				if useV5 {
+					pkey := newkey()
+					db, err := enode.OpenDB("")
+					if err != nil {
+						panic(err)
+					}
+					ln := enode.NewLocalNode(db, pkey)
 
-				_, _ = hash, nodeID
+					p, err := discv5.Decode(buf, ln.ID())
+					if err != nil {
+						log.Warn().Msgf("[discv5] %s", err.Error())
+						continue
+					}
 
-				log.Debug().Msgf("%s packet received > %s", ptype, spew.Sdump(p))
+					log.Debug().Msgf("[discv5] %s packet received > %s", p.Kind(), spew.Sdump(p))
+				} else {
+					hash, p, ptype, nodeID, err = discv4.Decode(buf)
+					if err != nil {
+						log.Warn().Msgf("[discv4] %s", err.Error())
+						continue
+					}
+
+					_, _ = hash, nodeID
+
+					log.Debug().Msgf("[discv4] %s packet received > %s", ptype, spew.Sdump(p))
+				}
 			}
 
 		case <-ticker:
@@ -106,4 +132,12 @@ func checkError(err error) {
 	if err != nil {
 		log.Fatal().Err(err).Send()
 	}
+}
+
+func newkey() *ecdsa.PrivateKey {
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		panic("couldn't generate key: " + err.Error())
+	}
+	return key
 }
