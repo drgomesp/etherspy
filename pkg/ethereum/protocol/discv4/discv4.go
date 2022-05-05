@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/rs/zerolog/log"
 )
 
 const MaxPacketSize = 1280
@@ -20,6 +19,21 @@ const (
 )
 
 type PacketKind byte
+
+func (p PacketKind) String() string {
+	switch p {
+	case PacketPing:
+		return "PING"
+	case PacketPong:
+		return "PONG"
+	case PacketFindNode:
+		return "FIND_NODE"
+	case PacketNeighbors:
+		return "NEIGHBORS"
+	default:
+		return "UNKNOWN"
+	}
+}
 
 const (
 	PacketPing = PacketKind(iota + 1)
@@ -56,22 +70,22 @@ type Neighbors struct {
 	Rest       []rlp.RawValue `rlp:"tail"`
 }
 
-func Decode(buf []byte) (hash []byte, p interface{}, id NodeID, err error) {
+func Decode(buf []byte) (hash []byte, p interface{}, ptype PacketKind, id NodeID, err error) {
 	if len(buf) < headSize+1 {
-		return hash, p, id, errors.New("packet too small")
+		return hash, p, 0x0, id, errors.New("packet too small")
 	}
 
 	hash, sig, sigdata := buf[:macSize], buf[macSize:headSize], buf[headSize:]
 	if !bytes.Equal(hash, crypto.Keccak256(buf[macSize:])) {
-		return hash, p, id, errors.New("bad hash")
+		return hash, p, 0x0, id, errors.New("bad hash")
 	}
 
 	fromID, err := recoverNodeID(crypto.Keccak256(buf[headSize:]), sig)
 	if err != nil {
-		return hash, p, id, err
+		return hash, p, 0x0, id, err
 	}
 
-	switch ptype := sigdata[0]; PacketKind(ptype) {
+	switch ptype = PacketKind(sigdata[0]); ptype {
 	case PacketPing:
 		p = new(Ping)
 	case PacketPong:
@@ -81,15 +95,12 @@ func Decode(buf []byte) (hash []byte, p interface{}, id NodeID, err error) {
 	case PacketNeighbors:
 		p = new(Neighbors)
 	default:
-		return hash, p, id, fmt.Errorf("unknown type: %d", ptype)
+		return hash, p, 0x0, id, fmt.Errorf("unknown type: %d", ptype)
 	}
-
-	// Print initial info
-	log.Debug().Interface("packet", p).Send()
 
 	err = rlp.
 		NewStream(bytes.NewReader(sigdata[1:]), 0).
 		Decode(p)
 
-	return hash, p, fromID, err
+	return hash, p, ptype, fromID, err
 }

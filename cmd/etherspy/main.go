@@ -78,25 +78,22 @@ func main() {
 				continue
 			}
 
-			if *logAllPackets {
-				spew.Dump(packet)
-			}
-
 			buf := packet.Layers()[3].LayerContents()
 
 			var (
 				hash   []byte
 				p      interface{}
+				ptype  discv4.PacketKind
 				nodeID discv4.NodeID
 			)
 
 			if buf != nil {
-				hash, p, nodeID, err = discv4.Decode(buf)
+				hash, p, ptype, nodeID, err = discv4.Decode(buf)
 				checkError(err)
 
 				_, _ = hash, nodeID
-				
-				spew.Dump(p)
+
+				log.Debug().Msgf("%s packet received > %s", ptype, spew.Sdump(p))
 			}
 
 		case <-ticker:
